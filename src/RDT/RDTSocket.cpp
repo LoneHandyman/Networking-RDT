@@ -46,6 +46,7 @@ net::Status net::RDTSocket::send(const std::string& message){
         dataHeader.setData(dataBuffered[nextSeqNum]);
         dataHeader.setSeqNumber(nextSeqNum);
         dataHeader.setRemainderPacketsCount(dataBuffered.size() - nextSeqNum - 1);
+        dataHeader.setType(RDTHeader::Type::Data);
         dataHeader >> packet;
         if(udt_socket->send(packet, remoteIp, remotePort, PAYLOAD) != Status::Done)
           return Status::Error;
@@ -58,7 +59,7 @@ net::Status net::RDTSocket::send(const std::string& message){
       if(udt_socket->receive(ack, currRemoteIp, currRemotePort, PAYLOAD) == Status::Done || timerStatus == TimerAns::Success){
         RDTHeader ackHeader;
         ackHeader << ack;
-        if(!ackHeader.isCorrupted()){
+        if(!ackHeader.isCorrupted() && ackHeader.getPacketType() == RDTHeader::Type::Acknowledgement){
           sendBase = std::max(ackHeader.getAckNumber() + 1, sendBase);
           window = ackHeader.getWindowSize();
         }
@@ -68,6 +69,7 @@ net::Status net::RDTSocket::send(const std::string& message){
           RDTHeader dataHeader;
           dataHeader.setData(dataBuffered[packetIdx]);
           dataHeader.setSeqNumber(packetIdx);
+          dataHeader.setType(RDTHeader::Type::Data);
           dataHeader >> packet;
           if(udt_socket->send(packet, remoteIp, remotePort, PAYLOAD) != Status::Done)
             return Status::Error;
@@ -85,5 +87,38 @@ net::Status net::RDTSocket::send(const std::string& message){
 }
 
 net::Status net::RDTSocket::receive(std::string& message){
-
+  if(udt_socket != nullptr){
+    message.clear();
+    uint32_t nextSeqNum = 0, remainderPackets = 1;
+    std::string packet, ack, currRemoteIp;
+    uint16_t currRemotePort;
+    udt_socket->setBlocking(true);
+    while(remainderPackets){
+      if(udt_socket->receive(packet, currRemoteIp, currRemotePort, PAYLOAD) != Status::Done)
+        return Status::Error;
+      RDTHeader dataHeader;
+      dataHeader << packet;
+      if(!dataHeader.isCorrupted() && dataHeader.getSeqNumber() == nextSeqNum){
+        message += dataHeader.getData();
+        remainderPackets = dataHeader.getRemainderPacketsCount();
+        RDTHeader ackHeader;
+        ackHeader.setAckNumber(nextSeqNum);
+        ackHeader.setType(RDTHeader::Type::Acknowledgement);
+        ackHeader >> ack;
+        if(udt_socket->send(ack, remoteIp, remotePort, PAYLOAD) != Status::Done)
+          return Status::Error;
+        ++nextSeqNum;
+      }
+      else{
+        RDTHeader ackHeader;
+        ackHeader.setAckNumber(nextSeqNum - 1);
+        ackHeader.setType(RDTHeader::Type::Acknowledgement);
+        ackHeader >> ack;
+        if(udt_socket->send(ack, currRemoteIp, currRemotePort, PAYLOAD) != Status::Done)
+          return Status::Error;
+      }
+    }
+    return Status::Done;
+  }
+  return Status::Error;
 }
