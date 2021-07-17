@@ -5,29 +5,34 @@
 #include <string>
 
 namespace net{
-  const size_t MAX_DGRAM_SIZE = 1000;
 
-  enum Status{Done, Connected, Disconnected, Error};
+  enum Status{Done, Error};
+  enum TimerAns{Success, TimeOut, Error, TimerNone};
 
   class UdpSocket{
   private:
     int32_t socketId;
     std::string localIp;
     uint16_t localPort;
+    bool blocking;
   public:
     UdpSocket();
     ~UdpSocket();
     Status bind(const uint16_t& localPort);
     void unbind();
-    Status send(const std::string& message, const std::string& remoteAddress, const uint16_t& remotePort);
-    Status receive(std::string& message, std::string& remoteAddress, uint16_t& remotePort);
+    Status send(const std::string& message, const std::string& remoteAddress, const uint16_t& remotePort, const std::size_t bytes);
+    Status receive(std::string& message, std::string& remoteAddress, uint16_t& remotePort, const std::size_t bytes);
 
     const uint16_t& getLocalPort() const;
     const std::string& getLocalIp() const;
 
+    void setBlocking(bool enabled);
+
     UdpSocket(const UdpSocket&) = delete;
     UdpSocket& operator=(const UdpSocket&) = delete;
     UdpSocket& operator=(UdpSocket&&) = delete;
+
+    friend TimerAns waitResponse(UdpSocket& socket, const int32_t& milliseconds);
   };
 
 }

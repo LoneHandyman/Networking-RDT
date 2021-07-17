@@ -4,15 +4,18 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <fcntl.h>
 #include <algorithm>
 
 net::UdpSocket::UdpSocket(){
   if((socketId = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
     std::cerr << "[Socket Creation] : --FAILURE--\n";
   }
+  blocking = true;
 }
 
 net::UdpSocket::~UdpSocket(){
@@ -40,7 +43,7 @@ void net::UdpSocket::unbind(){
   close(socketId);
 }
 
-net::Status net::UdpSocket::send(const std::string& message, const std::string& remoteAddress, const uint16_t& remotePort){
+net::Status net::UdpSocket::send(const std::string& message, const std::string& remoteAddress, const uint16_t& remotePort, const std::size_t bytes){
   struct sockaddr_in destination;
   destination.sin_family = AF_INET;
   destination.sin_addr.s_addr = inet_addr(remoteAddress.c_str());
@@ -50,11 +53,11 @@ net::Status net::UdpSocket::send(const std::string& message, const std::string& 
     close(socketId);
     return net::Status::Error;
   }
-  std::size_t bytesSent = 0, bytesLeft = MAX_DGRAM_SIZE;
-  char buffer[MAX_DGRAM_SIZE + 1];
+  std::size_t bytesSent = 0, bytesLeft = bytes;
+  char buffer[bytes + 1];
   memset(buffer, 0, strlen(buffer) + 1);
   strcpy(buffer, message.c_str());
-  while(bytesSent < MAX_DGRAM_SIZE){
+  while(bytesSent < bytes){
     size_t nbytesSent = 0;
     if ((nbytesSent = sendto(socketId, buffer + bytesSent, bytesLeft, 0, reinterpret_cast<const sockaddr*>(&destination), sizeof(destination))) < 0){
       std::cerr << "[Socket Sending] : --FAILURE--\n";
@@ -66,13 +69,13 @@ net::Status net::UdpSocket::send(const std::string& message, const std::string& 
   return net::Status::Done;
 }
 
-net::Status net::UdpSocket::receive(std::string& message, std::string& remoteAddress, uint16_t& remotePort){
+net::Status net::UdpSocket::receive(std::string& message, std::string& remoteAddress, uint16_t& remotePort, const std::size_t bytes){
   struct sockaddr_in destination;
   socklen_t len = sizeof(destination);
-  std::size_t bytesRecv = 0, bytesLeft = MAX_DGRAM_SIZE;
-  char buffer[MAX_DGRAM_SIZE + 1];
+  std::size_t bytesRecv = 0, bytesLeft = bytes;
+  char buffer[bytes + 1];
   memset(buffer, 0, strlen(buffer) + 1);
-  while(bytesRecv < MAX_DGRAM_SIZE){
+  while(bytesRecv < bytes){
     size_t nbytesRecv = 0;
     if((nbytesRecv = recvfrom(socketId, buffer + bytesRecv, bytesLeft, 0, reinterpret_cast<sockaddr*>(&destination), &len)) < 0){
       std::cerr << "[Socket Receiving] : --FAILURE--\n";
@@ -83,7 +86,7 @@ net::Status net::UdpSocket::receive(std::string& message, std::string& remoteAdd
   }
   remoteAddress = std::string(inet_ntoa(destination.sin_addr));
   remotePort = ntohs(destination.sin_port);
-  message = std::string(buffer).substr(0, MAX_DGRAM_SIZE);
+  message = std::string(buffer).substr(0, bytes);
   return net::Status::Done;
 }
 
@@ -93,4 +96,29 @@ const uint16_t& net::UdpSocket::getLocalPort() const{
 
 const std::string& net::UdpSocket::getLocalIp() const{
   return localIp;
+}
+
+void net::UdpSocket::setBlocking(bool enabled){
+  int32_t status = fcntl(socketId, F_GETFL);
+  if(enabled != blocking){
+    blocking = enabled;
+    if (fcntl(socketId, F_SETFL, ((blocking)?(status & ~O_NONBLOCK):(status | O_NONBLOCK))) == -1)
+      std::cerr << "[Socket Flag Change] : --FAILURE--\n";
+  }
+}
+
+net::TimerAns net::waitResponse(net::UdpSocket& socket, const int32_t& milliseconds){
+  fd_set rfds;
+  struct timeval tv;
+  int32_t retval;
+  FD_ZERO(&rfds);
+  FD_SET(socket.socketId, &rfds);
+  tv.tv_sec = std::max((time_t)milliseconds, (time_t)0);
+  tv.tv_usec = 0;
+  retval = select(1, &rfds, NULL, NULL, &tv);
+  if (retval == -1)
+    return net::TimerAns::Error;
+  else if (retval)
+    return net::TimerAns::Success;
+  return net::TimerAns::TimeOut;
 }
